@@ -22,9 +22,8 @@ except Exception as e:
 # bypassing the automated discovery system that causes configuration errors.
 try:
     conn = st.connection(
-        "connections.gsheets", 
+        "gsheets", 
         type=GSheetsConnection,
-        spreadsheet=r"https://docs.google.com/spreadsheets/d/1lhl6c2WLaZBCxYxwrEhQMOhtdJL7O0-B7bRbvOY1T8k/edit",
         type_account=st.secrets["connections"]["gsheets"]["type"],
         project_id=st.secrets["connections"]["gsheets"]["project_id"],
         private_key_id=st.secrets["connections"]["gsheets"]["private_key_id"],
