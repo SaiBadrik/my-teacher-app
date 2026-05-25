@@ -3,20 +3,38 @@ import pandas as pd
 from google import genai
 from google.genai import types
 from streamlit_gsheets import GSheetsConnection
-
-# Initialize Gemini 2.5 Flash Client
-# Automatically extracts GEMINI_API_KEY from environment variables/secrets
-client = genai.Client()
-
+api_key = st.secrets("GEMINI_API_KEY")
 st.set_page_config(page_title="AI Native Teacher Suite", layout="wide")
 st.title("🧙‍♂️ AI-Native Teacher Workspace")
 st.caption("Plan lessons, generate worksheets, and complete marking loops. Fully Editable & Free Cloud Saved.")
 
-# Initialize Cloud Storage Connection to Google Sheets
+# Initialize Gemini 2.5 Flash Client
+# Automatically extracts GEMINI_API_KEY from your secrets.toml file
 try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 except Exception as e:
-    st.error("Database connection missing. Please configure your Streamlit Secrets.")
+    st.error(f"Failed to initialize Gemini Client: {e}")
+    st.info("Check that GEMINI_API_KEY is defined in your secrets.toml file.")
+    st.stop()
+
+# --- MANUAL INJECTION BYPASS ---
+# This forces Streamlit to read your configuration parameters explicitly 
+# bypassing the automated discovery system that causes configuration errors.
+try:
+    conn = st.connection(
+        "gsheets", 
+        type=GSheetsConnection,
+        spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"],
+        type_account=st.secrets["connections"]["gsheets"]["type"],
+        project_id=st.secrets["connections"]["gsheets"]["project_id"],
+        private_key_id=st.secrets["connections"]["gsheets"]["private_key_id"],
+        private_key=st.secrets["connections"]["gsheets"]["private_key"],
+        client_email=st.secrets["connections"]["gsheets"]["client_email"],
+        client_id=st.secrets["connections"]["gsheets"]["client_id"]
+    )
+except Exception as e:
+    st.error(f"Critical System Config Validation Failed: {e}")
+    st.info("Please verify your `.streamlit/secrets.toml` file is in the correct directory and has the correct spelling.")
     st.stop()
 
 # Helper function to read safely and bypass data caching when editing
