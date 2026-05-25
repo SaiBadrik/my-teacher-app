@@ -3,7 +3,7 @@ import pandas as pd
 from google import genai
 from google.genai import types
 from streamlit_gsheets import GSheetsConnection
-api_key = st.secrets("GEMINI_API_KEY")
+
 st.set_page_config(page_title="AI Native Teacher Suite", layout="wide")
 st.title("🧙‍♂️ AI-Native Teacher Workspace")
 st.caption("Plan lessons, generate worksheets, and complete marking loops. Fully Editable & Free Cloud Saved.")
