@@ -2,14 +2,15 @@ import streamlit as st
 import pandas as pd
 from google import genai
 from google.genai import types
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="AI Native Teacher Suite", layout="wide")
 st.title("🧙‍♂️ AI-Native Teacher Workspace")
 st.caption("Plan lessons, generate worksheets, and complete marking loops. Fully Editable & Free Cloud Saved.")
 
 # ==========================================
-# INITIALIZATION & SECURE DATABASE PIPELINE
+# INITIALIZATION & DIRECT GOOGLE SHEETS PIPELINE
 # ==========================================
 
 # Initialize Gemini 2.5 Flash Client
@@ -17,30 +18,63 @@ try:
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 except Exception as e:
     st.error(f"Failed to initialize Gemini Client: {e}")
-    st.info("Check that GEMINI_API_KEY is defined in your secrets.toml file.")
     st.stop()
 
-# Initialize Google Sheets Connection
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-except Exception as e:
-    st.error(f"Critical Connection Initialization Failed: {e}")
-    st.stop()
-
-# Spreadsheet URL variable
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1lhl6c2WLaZBCxYxwrEhQMOhtdJL7O0-B7bRbvOY1T8k/edit?usp=sharing"
-
-# Helper function to read safely and bypass data caching when editing
-def fetch_worksheet(sheet_name):
+# Direct Google Sheets Authentication Helper
+@st.cache_resource
+def get_gspread_client():
+    # Define the required permissions scopes for Google Drive and Sheets
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
     try:
-        return conn.read(
-            spreadsheet=SPREADSHEET_URL,
-            worksheet=sheet_name, 
-            ttl=0
-        ).dropna(how="all")
-    except Exception as e:
-        st.error(f"Could not load worksheet '{sheet_name}': {e}")
+        # Pull configurations cleanly out of your existing [connections.gsheets] block
+        creds_dict = {
+            "type": st.secrets["connections"]["gsheets"]["type"],
+            "project_id": st.secrets["connections"]["gsheets"]["project_id"],
+            "private_key_id": st.secrets["connections"]["gsheets"]["private_key_id"],
+            "private_key": st.secrets["connections"]["gsheets"]["private_key"],
+            "client_email": st.secrets["connections"]["gsheets"]["client_email"],
+            "client_id": st.secrets["connections"]["gsheets"]["client_id"],
+        }
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(credentials)
+    except Exception as auth_err:
+        st.error(f"Failed to authenticate with Google: {auth_err}")
+        st.info("Check that your secrets.toml file matches the expected structure.")
+        st.stop()
+
+# Connect to your specific workbook
+SPREADSHEET_ID = "1lhl6c2WLaZBCxYxwrEhQMOhtdJL7O0-B7bRbvOY1T8k"
+
+def fetch_worksheet(sheet_name):
+    gc = get_gspread_client()
+    try:
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = sh.worksheet(sheet_name)
+        data = worksheet.get_all_records()
+        return pd.DataFrame(data)
+    except gspread.exceptions.WorksheetNotFound:
+        st.error(f"Tab named '{sheet_name}' was not found in your Google Sheet!")
+        st.info("Please make sure you have a tab named exactly matching that wording at the bottom of your sheet.")
         return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error reading '{sheet_name}': {e}")
+        return pd.DataFrame()
+
+def update_worksheet(sheet_name, df):
+    gc = get_gspread_client()
+    try:
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = sh.worksheet(sheet_name)
+        worksheet.clear()
+        # Include headers and write data rows back to the cloud
+        worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+        return True
+    except Exception as e:
+        st.error(f"Failed to save data to cloud: {e}")
+        return False
 
 # Initialize Session States for cross-tab workflows
 if 'active_lesson' not in st.session_state:
@@ -83,12 +117,9 @@ if menu == "👥 Manage Students":
             updated_df = pd.concat([df_students, new_student], ignore_index=True)
             
             # Live Write Back to Cloud Sheet
-            try:
-                conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Students", data=updated_df)
+            if update_worksheet("Students", updated_df):
                 st.success(f"Successfully registered {s_name} into database!")
                 st.rerun()
-            except Exception as write_err:
-                st.error(f"Failed to save student: {write_err}")
 
 # ==========================================
 # MODULE 2: AI LESSON ARCHITECT
@@ -122,8 +153,8 @@ elif menu == "📝 AI Lesson Architect":
             df_lessons = fetch_worksheet("Lessons")
             new_plan = pd.DataFrame([{"id": str(len(df_lessons)+1), "topic": topic, "content": st.session_state.active_lesson}])
             updated_df = pd.concat([df_lessons, new_plan], ignore_index=True)
-            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Lessons", data=updated_df)
-            st.success("Lesson structural data permanently saved.")
+            if update_worksheet("Lessons", updated_df):
+                st.success("Lesson structural data permanently saved.")
 
 # ==========================================
 # MODULE 3: AI WORKSHEET FACTORY
@@ -160,8 +191,8 @@ elif menu == "📄 AI Worksheet Factory":
             df_worksheets = fetch_worksheet("Worksheets")
             new_ws = pd.DataFrame([{"id": str(len(df_worksheets)+1), "topic": worksheet_topic, "content": st.session_state.active_worksheet}])
             updated_df = pd.concat([df_worksheets, new_ws], ignore_index=True)
-            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Worksheets", data=updated_df)
-            st.success("Worksheet file and answer keys securely saved.")
+            if update_worksheet("Worksheets", updated_df):
+                st.success("Worksheet file and answer keys securely saved.")
 
 # ==========================================
 # MODULE 4: AI AUTO-MARKING SYSTEM
@@ -169,19 +200,16 @@ elif menu == "📄 AI Worksheet Factory":
 elif menu == "🎯 AI Auto-Marking System":
     st.header("AI Diagnostic Assessment Engine")
     
-    # Pull Master Database dependencies
     df_students = fetch_worksheet("Students")
     df_worksheets = fetch_worksheet("Worksheets")
     
     if df_students.empty or df_worksheets.empty:
         st.warning("Ensure active rosters and worksheet master keys are populated in your cloud sheets first.")
     else:
-        # User dropdown selections
         student_mapping = dict(zip(df_students['name'], df_students['id']))
         selected_student_name = st.selectbox("Select Student Submitting Work:", list(student_mapping.keys()))
         selected_worksheet = st.selectbox("Target Assignment Reference Key:", list(df_worksheets['topic']))
         
-        # Pull associated criteria text
         criteria_text = df_worksheets[df_worksheets['topic'] == selected_worksheet]['content'].values[0]
         student_submission = st.text_area("Paste Student's Handwritten/Typed Text Output Answers Here:", height=200)
         
@@ -209,7 +237,6 @@ elif menu == "🎯 AI Auto-Marking System":
                     config=types.GenerateContentConfig(response_mime_type="application/json")
                 )
                 
-                # Parse JSON clean metrics
                 import json
                 try:
                     eval_metrics = json.loads(response.text)
@@ -218,7 +245,6 @@ elif menu == "🎯 AI Auto-Marking System":
                 except Exception as json_err:
                     st.error(f"Failed to parse AI response: {json_err}")
 
-        # FULLY EDITABLE EVALUATION CRITERIA FOR THE TEACHER OVERRIDE
         st.subheader("Teacher Verification Interface")
         final_score = st.slider("Verify/Modify Evaluated Mark (0-10):", 0, 10, value=st.session_state.ai_grade_suggestion)
         final_commentary = st.text_area("Verify/Rewrite Diagnostic Student Feedback:", value=st.session_state.ai_feedback_suggestion, height=150)
@@ -233,9 +259,9 @@ elif menu == "🎯 AI Auto-Marking System":
                 "feedback": final_commentary
             }])
             updated_df = pd.concat([df_grades, new_grade_entry], ignore_index=True)
-            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Grades", data=updated_df)
-            st.balloons()
-            st.success(f"Permanent score entry updated for {selected_student_name}.")
+            if update_worksheet("Grades", updated_df):
+                st.balloons()
+                st.success(f"Permanent score entry updated for {selected_student_name}.")
 
 # ==========================================
 # MODULE 5: STUDENT PORTFOLIOS
