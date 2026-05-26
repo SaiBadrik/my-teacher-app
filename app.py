@@ -2,14 +2,16 @@ import streamlit as st
 import pandas as pd
 from google import genai
 from google.genai import types
-from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="AI Native Teacher Suite", layout="wide")
 st.title("🧙‍♂️ AI-Native Teacher Workspace")
 st.caption("Plan lessons, generate worksheets, and complete marking loops. Fully Editable & Free Cloud Saved.")
 
+# ==========================================
+# INITIALIZATION & DIRECT CSV FETCH
+# ==========================================
+
 # Initialize Gemini 2.5 Flash Client
-# Automatically extracts GEMINI_API_KEY from your secrets.toml file
 try:
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 except Exception as e:
@@ -17,39 +19,20 @@ except Exception as e:
     st.info("Check that GEMINI_API_KEY is defined in your secrets.toml file.")
     st.stop()
 
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# 2. Pass the spreadsheet URL here when you read the data
-df = conn.read(
-    spreadsheet="https://docs.google.com/spreadsheets/d/1lhl6c2WLaZBCxYxwrEhQMOhtdJL7O0-B7bRbvOY1T8k/edit?usp=sharing",
-    ttl="10m"  # Optional: clear cache every 10 minutes
-)
-
-# --- MANUAL INJECTION BYPASS ---
-# This forces Streamlit to read your configuration parameters explicitly 
-# bypassing the automated discovery system that causes configuration errors.
-try:
-    conn = st.connection(
-        "connections.gsheets", 
-        type=GSheetsConnection,
-        spreadsheet=st.secrets["spreadsheet"],
-        type_account=st.secrets["type"],
-        project_id=st.secrets["project_id"],
-        private_key_id=st.secrets["private_key_id"],
-        private_key=st.secrets["private_key"],
-        client_email=st.secrets["client_email"],
-        client_id=st.secrets["client_id"]
-    )
-except Exception as e:
-    st.error(f"Critical System Config Validation Failed: {e}")
-    st.info("Please verify your `.streamlit/secrets.toml` file is in the correct directory and has the correct spelling.")
-    st.stop()
-
-# Helper function to read safely and bypass data caching when editing
+# Helper function to read tabs directly using your spreadsheet ID
 def fetch_worksheet(sheet_name):
-    return conn.read(worksheet=sheet_name, ttl=0).dropna(how="all")
+    sheet_id = "1lhl6c2WLaZBCxYxwrEhQMOhtdJL7O0-B7bRbvOY1T8k"
+    # Appending &sheet= targets specific tabs (e.g., Students, Worksheets, Grades)
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&sheet={sheet_name}"
+    
+    try:
+        return pd.read_csv(csv_url).dropna(how="all")
+    except Exception as e:
+        st.error(f"Could not load worksheet '{sheet_name}': {e}")
+        st.info("Make sure your Google Sheet sharing options are set to 'Anyone with the link can view'.")
+        return pd.DataFrame()
 
-# Initialize Session States for cross-tab editable workflows
+# Initialize Session States for cross-tab workflows
 if 'active_lesson' not in st.session_state:
     st.session_state.active_lesson = ""
 if 'active_worksheet' not in st.session_state:
@@ -72,10 +55,12 @@ if menu == "👥 Manage Students":
     
     # Read Current Data
     df_students = fetch_worksheet("Students")
-    st.subheader("Current Student Registry")
-    st.dataframe(df_students, use_container_width=True)
     
-    # Write New Data via Form
+    if not df_students.empty:
+        st.subheader("Current Student Registry")
+        st.dataframe(df_students, use_container_width=True)
+    
+    # Form layout
     with st.form("student_form", clear_on_submit=True):
         st.write("**Register New Student**")
         s_id = st.text_input("Unique Student ID Number")
@@ -84,11 +69,7 @@ if menu == "👥 Manage Students":
         submit = st.form_submit_button("Commit to Database")
         
         if submit and s_id and s_name:
-            new_student = pd.DataFrame([{"id": s_id, "name": s_name, "grade": s_grade}])
-            updated_df = pd.concat([df_students, new_student], ignore_index=True)
-            conn.update(worksheet="Students", data=updated_df)
-            st.success(f"Successfully registered {s_name} into database.")
-            st.rerun()
+            st.warning("⚠️ Local view reading activated. To append new inputs directly into Google Sheets live, configure the st.connection cloud write pipeline.")
 
 # ==========================================
 # MODULE 2: AI LESSON ARCHITECT
@@ -117,13 +98,6 @@ elif menu == "📝 AI Lesson Architect":
             st.session_state.active_lesson, 
             height=400
         )
-        
-        if st.button("Save Lesson Plan to Cloud"):
-            df_lessons = fetch_worksheet("Lessons")
-            new_plan = pd.DataFrame([{"id": str(len(df_lessons)+1), "topic": topic, "content": st.session_state.active_lesson}])
-            updated_df = pd.concat([df_lessons, new_plan], ignore_index=True)
-            conn.update(worksheet="Lessons", data=updated_df)
-            st.success("Lesson structural data permanently saved.")
 
 # ==========================================
 # MODULE 3: AI WORKSHEET FACTORY
@@ -155,16 +129,9 @@ elif menu == "📄 AI Worksheet Factory":
             st.session_state.active_worksheet, 
             height=400
         )
-        
-        if st.button("Save Worksheet File to Cloud"):
-            df_worksheets = fetch_worksheet("Worksheets")
-            new_ws = pd.DataFrame([{"id": str(len(df_worksheets)+1), "topic": worksheet_topic, "content": st.session_state.active_worksheet}])
-            updated_df = pd.concat([df_worksheets, new_ws], ignore_index=True)
-            conn.update(worksheet="Worksheets", data=updated_df)
-            st.success("Worksheet file and answer keys securely saved.")
 
 # ==========================================
-# MODULE 4: TARGETED AI AUTO-MARKING SYSTEM
+# MODULE 4: AI AUTO-MARKING SYSTEM
 # ==========================================
 elif menu == "🎯 AI Auto-Marking System":
     st.header("AI Diagnostic Assessment Engine")
@@ -211,28 +178,17 @@ elif menu == "🎯 AI Auto-Marking System":
                 
                 # Parse JSON clean metrics
                 import json
-                eval_metrics = json.loads(response.text)
-                st.session_state.ai_grade_suggestion = int(eval_metrics.get("grade", 0))
-                st.session_state.ai_feedback_suggestion = str(eval_metrics.get("feedback", ""))
+                try:
+                    eval_metrics = json.loads(response.text)
+                    st.session_state.ai_grade_suggestion = int(eval_metrics.get("grade", 0))
+                    st.session_state.ai_feedback_suggestion = str(eval_metrics.get("feedback", ""))
+                except Exception as json_err:
+                    st.error(f"Failed to parse AI response: {json_err}")
 
         # FULLY EDITABLE EVALUATION CRITERIA FOR THE TEACHER OVERRIDE
         st.subheader("Teacher Verification Interface")
         final_score = st.slider("Verify/Modify Evaluated Mark (0-10):", 0, 10, value=st.session_state.ai_grade_suggestion)
         final_commentary = st.text_area("Verify/Rewrite Diagnostic Student Feedback:", value=st.session_state.ai_feedback_suggestion, height=150)
-        
-        if st.button("Finalize Gradebook Submission"):
-            df_grades = fetch_worksheet("Grades")
-            new_grade_entry = pd.DataFrame([{
-                "id": str(len(df_grades)+1),
-                "student_id": str(student_mapping[selected_student_name]),
-                "task_name": selected_worksheet,
-                "mark": int(final_score),
-                "feedback": final_commentary
-            }])
-            updated_df = pd.concat([df_grades, new_grade_entry], ignore_index=True)
-            conn.update(worksheet="Grades", data=updated_df)
-            st.balloons()
-            st.success(f"Permanent score entry updated for {selected_student_name}.")
 
 # ==========================================
 # MODULE 5: STUDENT PORTFOLIOS
@@ -243,19 +199,18 @@ elif menu == "📊 Student Portfolios":
     df_grades = fetch_worksheet("Grades")
     
     if df_students.empty or df_grades.empty:
-        st.info("No marks entries have been compiled inside the cloud database records yet.")
+        st.info("No marks entries found or could be read from cloud logs.")
     else:
         student_mapping = dict(zip(df_students['name'], df_students['id']))
         target_profile = st.selectbox("Select Profile View Target Portfolio:", list(student_mapping.keys()))
         
         target_id = str(student_mapping[target_profile])
-        # Convert column types to string to ensure safe database indexing matches
         df_grades['student_id'] = df_grades['student_id'].astype(str)
         
         student_history = df_grades[df_grades['student_id'] == target_id]
         
         if student_history.empty:
-            st.warning("This student does not have any saved grades or feedback entries in this academic cycle.")
+            st.warning("This student does not have any saved grades or feedback entries.")
         else:
             st.subheader(f"Academic Overview Summary: {target_profile}")
             avg_score = student_history['mark'].astype(float).mean()
