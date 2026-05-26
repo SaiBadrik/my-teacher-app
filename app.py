@@ -21,7 +21,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 2. Pass the spreadsheet URL here when you read the data
 df = conn.read(
-    spreadsheet="https://docs.google.com/spreadsheets/d/1lhl6c2WLaZBCxYxwrEhQMOhtdJL7O0-B7bRbvOY1T8k/edit",
+    spreadsheet="https://docs.google.com/spreadsheets/d/1lhl6c2WLaZBCxYxwrEhQMOhtdJL7O0-B7bRbvOY1T8k/edit?usp=sharing",
     ttl="10m"  # Optional: clear cache every 10 minutes
 )
 
