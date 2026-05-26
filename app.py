@@ -17,6 +17,14 @@ except Exception as e:
     st.info("Check that GEMINI_API_KEY is defined in your secrets.toml file.")
     st.stop()
 
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# 2. Pass the spreadsheet URL here when you read the data
+df = conn.read(
+    spreadsheet="https://docs.google.com/spreadsheets/d/1lhl6c2WLaZBCxYxwrEhQMOhtdJL7O0-B7bRbvOY1T8k/edit",
+    ttl="10m"  # Optional: clear cache every 10 minutes
+)
+
 # --- MANUAL INJECTION BYPASS ---
 # This forces Streamlit to read your configuration parameters explicitly 
 # bypassing the automated discovery system that causes configuration errors.
