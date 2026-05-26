@@ -24,7 +24,7 @@ try:
     conn = st.connection(
         "gsheets", 
         type=GSheetsConnection,
-        spreadsheet=st.secrets["spreadsheet"]
+        spreadsheet=st.secrets["spreadsheet"],
         type_account=st.secrets["type"],
         project_id=st.secrets["project_id"],
         private_key_id=st.secrets["private_key_id"],
