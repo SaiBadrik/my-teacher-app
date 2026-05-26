@@ -24,12 +24,13 @@ try:
     conn = st.connection(
         "gsheets", 
         type=GSheetsConnection,
-        type_account=st.secrets["connections"]["gsheets"]["type"],
-        project_id=st.secrets["connections"]["gsheets"]["project_id"],
-        private_key_id=st.secrets["connections"]["gsheets"]["private_key_id"],
-        private_key=st.secrets["connections"]["gsheets"]["private_key"],
-        client_email=st.secrets["connections"]["gsheets"]["client_email"],
-        client_id=st.secrets["connections"]["gsheets"]["client_id"]
+        spreadsheet=st.secrets["spreadsheet"]
+        type_account=st.secrets["type"],
+        project_id=st.secrets["project_id"],
+        private_key_id=st.secrets["private_key_id"],
+        private_key=st.secrets["private_key"],
+        client_email=st.secrets["client_email"],
+        client_id=st.secrets["client_id"]
     )
 except Exception as e:
     st.error(f"Critical System Config Validation Failed: {e}")
