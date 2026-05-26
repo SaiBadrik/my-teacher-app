@@ -2,13 +2,14 @@ import streamlit as st
 import pandas as pd
 from google import genai
 from google.genai import types
+from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="AI Native Teacher Suite", layout="wide")
 st.title("🧙‍♂️ AI-Native Teacher Workspace")
 st.caption("Plan lessons, generate worksheets, and complete marking loops. Fully Editable & Free Cloud Saved.")
 
 # ==========================================
-# INITIALIZATION & DIRECT CSV FETCH
+# INITIALIZATION & SECURE DATABASE PIPELINE
 # ==========================================
 
 # Initialize Gemini 2.5 Flash Client
@@ -19,17 +20,26 @@ except Exception as e:
     st.info("Check that GEMINI_API_KEY is defined in your secrets.toml file.")
     st.stop()
 
-# Helper function to read tabs directly using your spreadsheet ID
+# Initialize Google Sheets Connection
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception as e:
+    st.error(f"Critical Connection Initialization Failed: {e}")
+    st.stop()
+
+# Spreadsheet URL variable
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1lhl6c2WLaZBCxYxwrEhQMOhtdJL7O0-B7bRbvOY1T8k/edit?usp=sharing"
+
+# Helper function to read safely and bypass data caching when editing
 def fetch_worksheet(sheet_name):
-    sheet_id = "1lhl6c2WLaZBCxYxwrEhQMOhtdJL7O0-B7bRbvOY1T8k"
-    # Appending &sheet= targets specific tabs (e.g., Students, Worksheets, Grades)
-    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&sheet={sheet_name}"
-    
     try:
-        return pd.read_csv(csv_url).dropna(how="all")
+        return conn.read(
+            spreadsheet=SPREADSHEET_URL,
+            worksheet=sheet_name, 
+            ttl=0
+        ).dropna(how="all")
     except Exception as e:
         st.error(f"Could not load worksheet '{sheet_name}': {e}")
-        st.info("Make sure your Google Sheet sharing options are set to 'Anyone with the link can view'.")
         return pd.DataFrame()
 
 # Initialize Session States for cross-tab workflows
@@ -60,7 +70,7 @@ if menu == "👥 Manage Students":
         st.subheader("Current Student Registry")
         st.dataframe(df_students, use_container_width=True)
     
-    # Form layout
+    # Form layout to write data live to the sheet
     with st.form("student_form", clear_on_submit=True):
         st.write("**Register New Student**")
         s_id = st.text_input("Unique Student ID Number")
@@ -69,7 +79,16 @@ if menu == "👥 Manage Students":
         submit = st.form_submit_button("Commit to Database")
         
         if submit and s_id and s_name:
-            st.warning("⚠️ Local view reading activated. To append new inputs directly into Google Sheets live, configure the st.connection cloud write pipeline.")
+            new_student = pd.DataFrame([{"id": s_id, "name": s_name, "grade": s_grade}])
+            updated_df = pd.concat([df_students, new_student], ignore_index=True)
+            
+            # Live Write Back to Cloud Sheet
+            try:
+                conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Students", data=updated_df)
+                st.success(f"Successfully registered {s_name} into database!")
+                st.rerun()
+            except Exception as write_err:
+                st.error(f"Failed to save student: {write_err}")
 
 # ==========================================
 # MODULE 2: AI LESSON ARCHITECT
@@ -98,6 +117,13 @@ elif menu == "📝 AI Lesson Architect":
             st.session_state.active_lesson, 
             height=400
         )
+        
+        if st.button("Save Lesson Plan to Cloud"):
+            df_lessons = fetch_worksheet("Lessons")
+            new_plan = pd.DataFrame([{"id": str(len(df_lessons)+1), "topic": topic, "content": st.session_state.active_lesson}])
+            updated_df = pd.concat([df_lessons, new_plan], ignore_index=True)
+            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Lessons", data=updated_df)
+            st.success("Lesson structural data permanently saved.")
 
 # ==========================================
 # MODULE 3: AI WORKSHEET FACTORY
@@ -129,6 +155,13 @@ elif menu == "📄 AI Worksheet Factory":
             st.session_state.active_worksheet, 
             height=400
         )
+        
+        if st.button("Save Worksheet File to Cloud"):
+            df_worksheets = fetch_worksheet("Worksheets")
+            new_ws = pd.DataFrame([{"id": str(len(df_worksheets)+1), "topic": worksheet_topic, "content": st.session_state.active_worksheet}])
+            updated_df = pd.concat([df_worksheets, new_ws], ignore_index=True)
+            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Worksheets", data=updated_df)
+            st.success("Worksheet file and answer keys securely saved.")
 
 # ==========================================
 # MODULE 4: AI AUTO-MARKING SYSTEM
@@ -189,6 +222,20 @@ elif menu == "🎯 AI Auto-Marking System":
         st.subheader("Teacher Verification Interface")
         final_score = st.slider("Verify/Modify Evaluated Mark (0-10):", 0, 10, value=st.session_state.ai_grade_suggestion)
         final_commentary = st.text_area("Verify/Rewrite Diagnostic Student Feedback:", value=st.session_state.ai_feedback_suggestion, height=150)
+        
+        if st.button("Finalize Gradebook Submission"):
+            df_grades = fetch_worksheet("Grades")
+            new_grade_entry = pd.DataFrame([{
+                "id": str(len(df_grades)+1),
+                "student_id": str(student_mapping[selected_student_name]),
+                "task_name": selected_worksheet,
+                "mark": int(final_score),
+                "feedback": final_commentary
+            }])
+            updated_df = pd.concat([df_grades, new_grade_entry], ignore_index=True)
+            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Grades", data=updated_df)
+            st.balloons()
+            st.success(f"Permanent score entry updated for {selected_student_name}.")
 
 # ==========================================
 # MODULE 5: STUDENT PORTFOLIOS
